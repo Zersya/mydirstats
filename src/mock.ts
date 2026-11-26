@@ -74,6 +74,9 @@ export class MockBackend implements Backend {
   private childDirIds = new Map<number, number[]>(); // skeleton: dir id -> child dir ids
   private aggIdOf = new Map<number, number>(); // dir id -> its small-file aggregate node id
   private visibleIds = new Set<number>(); // currently emitted/visible node ids
+  private pollFiles = 0;
+  private pollBytes = 0;
+  private pollPath = "";
 
   private emit(event: string, payload: unknown) {
     const set = this.handlers.get(event);
@@ -99,6 +102,14 @@ export class MockBackend implements Backend {
         }
         this.emit("scan-cancelled", { scanId: this.scanIdCounter });
         return Promise.resolve(undefined as never);
+      case "scan_progress_poll":
+        return Promise.resolve({
+          scanId: this.scanIdCounter,
+          phase: 1,
+          files: this.pollFiles,
+          bytes: this.pollBytes,
+          currentPath: this.pollPath,
+        } as never);
       case "expand_dir":
         this.expandDir(a.id ?? 0);
         return Promise.resolve(undefined as never);
@@ -182,11 +193,9 @@ export class MockBackend implements Backend {
       walked = Math.floor(totalFiles * frac);
       walkedBytes = Math.floor(totalBytes * frac);
       const dirName = DIR_NAMES[Math.floor((elapsed / 90) % DIR_NAMES.length)];
-      this.emit("scan-progress", {
-        scanId, phase: "walking",
-        currentPath: `${path}/${dirName}/${FILE_STEPS_NAMES[Math.floor((elapsed / 130) % FILE_STEPS_NAMES.length)]}`,
-        scannedFiles: walked, scannedBytes: walkedBytes,
-      });
+      this.pollFiles = walked;
+      this.pollBytes = walkedBytes;
+      this.pollPath = `${path}/${dirName}/${FILE_STEPS_NAMES[Math.floor((elapsed / 130) % FILE_STEPS_NAMES.length)]}`;
       if (frac < 1) {
         this.scanTimer = setTimeout(walkTick, 90);
       } else {

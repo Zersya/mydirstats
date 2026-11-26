@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub type NodeId = u64;
 
@@ -645,32 +645,25 @@ pub fn run_scan(
         return Err(format!("path is not a directory: {}", root.display()));
     }
 
-    // ---- phase 1: quiet walk, counter progress only ----
-    let mut scanned_files: u64 = 0;
-    let mut scanned_bytes: u64 = 0;
-    let mut last_emit = Instant::now() - Duration::from_millis(200);
-    let mut last_dir_path = root.to_string_lossy().into_owned();
+    // ---- phase 1: quiet walk. progress is written to shared atomics and
+    // polled by the frontend; no push events (they stall under scan load). ----
+    let prog_files = &app.state::<crate::AppState>().progress_files;
+    let prog_bytes = &app.state::<crate::AppState>().progress_bytes;
+    let prog_scan_id = &app.state::<crate::AppState>().progress_scan_id;
+    let prog_phase = &app.state::<crate::AppState>().progress_phase;
+    prog_scan_id.store(scan_id, Ordering::Relaxed);
+    prog_phase.store(1, Ordering::Relaxed);
 
     let result = walk_tree(root, false, &next_id, Some(&cancel), |e| {
-        scanned_files += 1;
+        let files = prog_files.fetch_add(1, Ordering::Relaxed) + 1;
         if e.is_leaf() {
-            scanned_bytes += e.own_size;
+            prog_bytes.fetch_add(e.own_size, Ordering::Relaxed);
         }
-        if e.is_dir() {
-            last_dir_path = e.path.to_string_lossy().into_owned();
-        }
-        if last_emit.elapsed() >= Duration::from_millis(100) {
-            let _ = app.emit(
-                "scan-progress",
-                ScanProgressEvent {
-                    scan_id,
-                    phase: "walking",
-                    current_path: last_dir_path.clone(),
-                    scanned_files,
-                    scanned_bytes,
-                },
-            );
-            last_emit = Instant::now();
+        // path display is cosmetic: update at most every ~2048 entries to keep
+        // mutex contention off the parallel walker's hot path
+        if e.is_dir() && files % 2048 == 0 {
+            let st = app.state::<crate::AppState>();
+            *st.progress_path.lock() = e.path.to_string_lossy().into_owned();
         }
     });
 

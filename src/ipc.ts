@@ -20,6 +20,7 @@ type Handler<T> = (payload: T) => void;
 
 export interface Backend {
   invoke(cmd: "start_scan", args: { path: string }): Promise<{ scanId: number }>;
+  invoke(cmd: "scan_progress_poll"): Promise<{ scanId: number; phase: number; files: number; bytes: number; currentPath: string }>;
   invoke(cmd: "cancel_scan"): Promise<void>;
   invoke(cmd: "expand_dir", args: { id: number }): Promise<void>;
   invoke(cmd: "trash_items", args: { paths: string[] }): Promise<{ trashed: string[]; failed: { path: string; error: string }[] }>;

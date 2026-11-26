@@ -17,10 +17,38 @@ pub struct AppState {
     pub next_id: Arc<AtomicU64>,
     pub watcher_stop: Arc<AtomicBool>,
     pub watcher_gen: AtomicU64,
+    // live walk-phase counters, polled by the frontend. Tauri's push events
+    // demonstrably stall under scan load; pull-based progress has no channel.
+    pub progress_files: AtomicU64,
+    pub progress_bytes: AtomicU64,
+    pub progress_scan_id: AtomicU64,
+    pub progress_phase: AtomicU64, // 0 idle, 1 walking, 2 emitting, 3 done
+    pub progress_path: Mutex<String>,
 }
 
 // ---------- commands ----------
 
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScanProgressPoll {
+    scan_id: u64,
+    phase: u64,
+    files: u64,
+    bytes: u64,
+    current_path: String,
+}
+
+#[tauri::command]
+fn scan_progress_poll(state: State<'_, AppState>) -> ScanProgressPoll {
+    ScanProgressPoll {
+        scan_id: state.progress_scan_id.load(Ordering::Relaxed),
+        phase: state.progress_phase.load(Ordering::Relaxed),
+        files: state.progress_files.load(Ordering::Relaxed),
+        bytes: state.progress_bytes.load(Ordering::Relaxed),
+        current_path: state.progress_path.lock().clone(),
+    }
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StartScanResult {
@@ -52,6 +80,12 @@ fn start_scan(
     let cancel = Arc::new(AtomicBool::new(false));
     *state.cancel.lock() = Some(cancel.clone());
 
+    // reset pollable progress for the new scan
+    state.progress_files.store(0, Ordering::Relaxed);
+    state.progress_bytes.store(0, Ordering::Relaxed);
+    state.progress_phase.store(1, Ordering::Relaxed);
+    *state.progress_path.lock() = path.clone();
+
     let app2 = app.clone();
     let root2 = root.clone();
     std::thread::spawn(move || {
@@ -80,7 +114,9 @@ fn start_scan(
                 let mut t = st.tree.lock();
                 t.build(&out, &root2);
                 drop(out);
+                st.progress_phase.store(2, Ordering::Relaxed);
                 tree::emit_scan_tree(&app2, scan_id, &mut t, stats, &next_id);
+                st.progress_phase.store(3, Ordering::Relaxed);
             }
             let gen = st.watcher_gen.load(Ordering::SeqCst);
             watcher::start_watcher(app2.clone(), root2, gen);
@@ -271,9 +307,15 @@ pub fn run() {
             next_id: Arc::new(AtomicU64::new(1)),
             watcher_stop: Arc::new(AtomicBool::new(false)),
             watcher_gen: AtomicU64::new(0),
+            progress_files: AtomicU64::new(0),
+            progress_bytes: AtomicU64::new(0),
+            progress_scan_id: AtomicU64::new(0),
+            progress_phase: AtomicU64::new(0),
+            progress_path: Mutex::new(String::new()),
         })
         .invoke_handler(tauri::generate_handler![
             start_scan,
+            scan_progress_poll,
             cancel_scan,
             trash_items,
             reveal_in_finder,

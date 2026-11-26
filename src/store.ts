@@ -91,14 +91,7 @@ export class ScanStore {
     const b = getBackend();
     const stale = (scanId: number) => scanId !== this.scanId;
 
-    this.detached.push(await b.listen("scan-progress", (ev) => {
-      if (stale(ev.scanId)) return;
-      this.state.scanStage = "walking";
-      this.state.currentPath = ev.currentPath;
-      this.state.scannedFiles = ev.scannedFiles;
-      this.state.scannedBytes = ev.scannedBytes;
-      this.notify(false);
-    }));
+    // (walk progress polling lives in startScan - it is per-scan, not per-attach)
 
     this.detached.push(await b.listen("scan-nodes", (ev) => {
       if (stale(ev.scanId)) return;
@@ -171,6 +164,29 @@ export class ScanStore {
     this.state.scanRootPath = path;
     this.state.rootName = "";
     this.notify();
+
+    // Walk-phase progress is polled, not pushed: Tauri's event channel
+    // demonstrably stalls under scan load, freezing counters while the scan
+    // continues invisibly. A 250ms invoke round-trip is cheap and reliable.
+    const poll = async () => {
+      if (this.scanId !== scanId) return; // superseded by a newer scan
+      if (this.state.phase !== "scanning" || this.state.scanStage !== "walking") return;
+      try {
+        const p = await b.invoke("scan_progress_poll") as {
+          scanId: number; phase: number; files: number; bytes: number; currentPath: string;
+        };
+        if (p.scanId === scanId && this.state.scanStage === "walking") {
+          this.state.scannedFiles = p.files;
+          this.state.scannedBytes = p.bytes;
+          if (p.currentPath) this.state.currentPath = p.currentPath;
+          this.notify(false);
+        }
+      } catch { /* backend without poll support: ignore */ }
+      if (this.scanId === scanId && this.state.phase === "scanning" && this.state.scanStage === "walking") {
+        setTimeout(poll, 250);
+      }
+    };
+    setTimeout(poll, 120);
   }
 
   cancelScan() {
