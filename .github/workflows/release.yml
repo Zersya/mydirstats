@@ -19,17 +19,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # GitHub no longer hosts any Intel mac runners (macos-13 retired) and
+        # macos-14 is retired too. macos-15 is arm64; the x86_64 dmg is
+        # cross-compiled on it, which tauri/cargo handle natively.
         include:
-          - runner: macos-14 # Apple Silicon
+          - runner: macos-15
             target: aarch64-apple-darwin
-          - runner: macos-13 # Intel
+          - runner: macos-15
             target: x86_64-apple-darwin
 
     runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
