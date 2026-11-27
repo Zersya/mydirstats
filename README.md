@@ -26,12 +26,25 @@ mydirstats keeps the proven tri-pane layout, adds progressive live scanning (wat
 
 ## Install
 
-Grab the app from Releases, or build from source:
+Download the `.dmg` for your Mac from [Releases](https://github.com/Zersya/mydirstats/releases):
+
+- `aarch64` - Apple Silicon (M1/M2/M3/M4)
+- `x64` - Intel
+
+The app is unsigned (no paid Apple Developer account), so macOS will say it "cannot be opened" or "is damaged" on first launch. Fix it once, after copying the app to Applications:
+
+```sh
+xattr -cr /Applications/mydirstats.app
+```
+
+Or right-click the app -> Open -> confirm in the dialog. This is the standard workaround for unsigned open-source macOS software.
+
+Or build from source:
 
 ```sh
 npm install
 npx tauri build
-# bundle lands in src-tauri/target/release/bundle/macos/mydirstats.app
+# dmg and app bundle land in src-tauri/target/release/bundle/
 ```
 
 Requirements: Rust stable, Node 20+, macOS 12+.
